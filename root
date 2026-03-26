@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Farm Solo 3D - GitHub Pages</title>
+<style>
+body { margin:0; overflow:hidden; font-family: Arial; }
+#ui{
+  position:absolute; top:10px; left:10px;
+  background: rgba(255,255,255,0.9); padding:10px; border-radius:10px; z-index:10;
+}
+button{ margin:3px; padding:6px 12px; cursor:pointer; font-size:16px; }
+.inventory{ margin-top:5px; display:flex; gap:5px; }
+.inv-slot{ width:40px; height:40px; border:1px solid #555; display:flex; align-items:center; justify-content:center; background:#eee; font-size:20px;}
+</style>
+</head>
+<body>
+
+<div id="ui">
+💰 <span id="money">100</span> 🌾 <span id="wheat">0</span><br>
+Mode: <span id="mode">plant</span><br>
+<button onclick="setMode('plant')">🌱 Planter</button>
+<button onclick="setMode('harvest')">🌾 Récolter</button>
+<button onclick="setMode('sell')">💰 Vendre</button>
+<div class="inventory" id="inventory">
+<div class="inv-slot" id="inv-wheat">🌾0</div>
+</div>
+</div>
+
+<!-- Three.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script>
+let scene,camera,renderer,player;
+let tiles=[],shop;
+let keys={},money=100,wheat=0,mode="plant",velocity={x:0,z:0},sun,time=0;
+
+initGame();
+animate();
+
+function initGame(){
+  scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x87CEEB,20,100);
+
+  camera = new THREE.PerspectiveCamera(75,window.innerWidth/window.innerHeight,0.1,1000);
+  camera.position.set(0,6,8);
+  camera.lookAt(0,0,0);
+
+  renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(window.innerWidth,window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  sun = new THREE.DirectionalLight(0xffffff,1);
+  sun.position.set(20,30,10);
+  sun.castShadow = true;
+  scene.add(sun);
+  scene.add(new THREE.AmbientLight(0x888888));
+
+  // Sol herbeux
+  const groundGeo = new THREE.PlaneGeometry(50,50,50,50);
+  const groundMat = new THREE.MeshLambertMaterial({vertexColors:true});
+  const ground = new THREE.Mesh(groundGeo,groundMat);
+  ground.rotation.x=-Math.PI/2;
+  let colors = new Float32Array(groundGeo.attributes.position.count*3);
+  for(let i=0;i<groundGeo.attributes.position.count;i++){
+    let c = new THREE.Color(0x228B22);
+    c.offsetHSL(0,0,Math.random()*0.1);
+    colors[i*3]=c.r; colors[i*3+1]=c.g; colors[i*3+2]=c.b;
+  }
+  groundGeo.setAttribute('color',new THREE.BufferAttribute(colors,3));
+  scene.add(ground);
+
+  // Personnage simple animé
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.8,1,0.5), new THREE.MeshLambertMaterial({color:0x2196F3}));
+  body.position.y=0.5;
+  const leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.8,0.2), new THREE.MeshLambertMaterial({color:0x2196F3}));
+  leftArm.position.set(-0.5,0.8,0);
+  const rightArm = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.8,0.2), new THREE.MeshLambertMaterial({color:0x2196F3}));
+  rightArm.position.set(0.5,0.8,0);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.6,0.6), new THREE.MeshLambertMaterial({color:0x2196F3}));
+  head.position.y=1.3;
+  player = new THREE.Group();
+  player.add(body); player.add(head); player.add(leftArm); player.add(rightArm);
+  scene.add(player);
+
+  // Champs
+  for(let x=-3;x<=3;x++){
+    for(let z=-3;z<=3;z++){
+      let tile=new THREE.Mesh(new THREE.BoxGeometry(1,0.2,1), new THREE.MeshLambertMaterial({color:0x6b4423}));
+      tile.position.set(x,0.1,z);
+      tile.userData={state:0};
+      tile.castShadow=false;
+      tile.receiveShadow=true;
+      scene.add(tile);
+      tiles.push(tile);
+    }
+  }
+
+  // Boutique
+  shop=new THREE.Mesh(new THREE.CylinderGeometry(1,1,0.2,32), new THREE.MeshLambertMaterial({color:0xffff00}));
+  shop.position.set(5,0.1,5);
+  scene.add(shop);
+
+  window.addEventListener("keydown",e=>keys[e.key.toLowerCase()]=true);
+  window.addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
+  window.addEventListener("keydown",e=>{if(e.key==='e') interact();});
+
+  updateUI();
+  window.addEventListener("resize",()=>{camera.aspect=window.innerWidth/window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth,window.innerHeight);});
+}
+
+function interact(){
+  tiles.forEach(tile=>{
+    if(player.position.distanceTo(tile.position)<1.5){
+      if(mode==="plant" && tile.userData.state===0 && money>=5){
+        tile.userData.state=1; tile.material.color.set(0x00aa00); money-=5;
+        let growInterval = setInterval(()=>{
+          tile.userData.state++;
+          if(tile.userData.state===2) tile.material.color.set(0x33cc33);
+          if(tile.userData.state===3){ tile.material.color.set(0xffff00); clearInterval(growInterval);}
+        },2000);
+      }else if(mode==="harvest" && tile.userData.state===3){
+        tile.userData.state=0; tile.material.color.set(0x6b4423); wheat++;
+      }
+    }
+  });
+  if(player.position.distanceTo(shop.position)<2 && mode==="sell"){ money+=wheat*15; wheat=0; }
+  updateUI();
+}
+
+function updateUI(){document.getElementById("money").textContent=money; document.getElementById("wheat").textContent=wheat; document.getElementById("mode").textContent=mode; document.getElementById("inv-wheat").textContent="🌾"+wheat;}
+function setMode(newMode){mode=newMode; updateUI();}
+
+function animate(){
+  requestAnimationFrame(animate);
+  const accel=0.05;
+  if(keys["z"]||keys["w"]) velocity.z-=accel;
+  if(keys["s"]) velocity.z+=accel;
+  if(keys["q"]||keys["a"]) velocity.x-=accel;
+  if(keys["d"]) velocity.x+=accel;
+
+  velocity.x*=0.85; velocity.z*=0.85;
+  player.position.x+=velocity.x; player.position.z+=velocity.z;
+
+  // Animation bras marche
+  let speed = Math.sqrt(velocity.x*velocity.x+velocity.z*velocity.z);
+  player.children[2].rotation.x = Math.sin(Date.now()*0.01)*0.5*speed; // gauche
+  player.children[3].rotation.x = -Math.sin(Date.now()*0.01)*0.5*speed; // droite
+
+  let camTarget=new THREE.Vector3(player.position.x+7,6,player.position.z+7);
+  camera.position.lerp(camTarget,0.08);
+  camera.lookAt(player.position);
+
+  // Jour/nuit
+  time+=0.002;
+  let lightIntensity=Math.sin(time)*0.5+0.5;
+  sun.intensity=lightIntensity;
+  scene.background.setHSL(0.33,1,lightIntensity*0.6+0.2);
+
+  renderer.render(scene,camera);
+}
+</script>
+</body>
+</html>
